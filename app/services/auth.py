@@ -1,7 +1,4 @@
-"""
-Authentication services for API key validation.
-"""
-
+import secrets
 from datetime import datetime
 from fastapi import Header, HTTPException, Depends, Security
 from fastapi.security import APIKeyHeader
@@ -10,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import APIKey
-
 from app.config import settings
 
 API_KEY_NAME = "X-API-Key"
@@ -30,10 +26,10 @@ async def validate_api_key(
             detail="API Key missing from header (X-API-Key)",
         )
 
-    # Check Master Key
-    if settings.MASTER_API_KEY and api_key_header == settings.MASTER_API_KEY:
+    # Check Master Key with constant-time comparison
+    if settings.MASTER_API_KEY and secrets.compare_digest(api_key_header, settings.MASTER_API_KEY):
         # Return a "System" APIKey object (not in DB) or just a mock
-        return APIKey(key=api_key_header, client_name="System/Master", is_active=1)
+        return APIKey(key="[MASTER]", client_name="System/Master", is_active=1)
 
     stmt = select(APIKey).where(APIKey.key == api_key_header, APIKey.is_active == 1)
     result = await db.execute(stmt)
@@ -45,7 +41,7 @@ async def validate_api_key(
             detail="Invalid or inactive API Key",
         )
 
-    # Update last_used_at (optional, but good for tracking)
+    # Update last_used_at
     api_key_obj.last_used_at = datetime.now()
     await db.commit()
 
@@ -56,7 +52,6 @@ async def validate_admin(
 ) -> APIKey:
     """
     Ensure the API key is either the Master Key or has admin privileges.
-    For now, only the Master Key (System/Master) is considered admin.
     """
     if api_key.client_name != "System/Master":
         raise HTTPException(
@@ -65,10 +60,14 @@ async def validate_admin(
         )
     return api_key
 
-async def create_api_key(client_name: str, db: AsyncSession, key: str | None = None) -> APIKey:
-    """Utility to create a new API key."""
-    import secrets
-    actual_key = key or secrets.token_urlsafe(32)
+async def create_api_key(client_name: str, db: AsyncSession) -> APIKey:
+    """
+    Utility to create a new API key. 
+    The key is generated securely and stored in the database.
+    """
+    # Generate a secure random key with a prefix
+    actual_key = f"mcf_{secrets.token_urlsafe(32)}"
+    
     new_key = APIKey(
         key=actual_key,
         client_name=client_name,

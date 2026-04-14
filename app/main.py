@@ -38,8 +38,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"  Marketplace:  {settings.SP_API_MARKETPLACE_ID}")
     logger.info("=" * 60)
 
-    if settings.ENVIRONMENT == "production" and not settings.DRY_RUN:
-        logger.warning("ATTENTION: PRODUCTION MODE with DRY_RUN=False - REAL Amazon calls will be made!")
+    if settings.ENVIRONMENT == "production":
+        if not settings.DRY_RUN:
+            logger.warning("ATTENTION: PRODUCTION MODE with DRY_RUN=False - REAL Amazon calls will be made!")
+        
+        if settings.MASTER_API_KEY == "dev_master_key":
+            logger.error("DANGER: Default MASTER_API_KEY used in PRODUCTION. Security is compromised!")
+            # In a real mission-critical app, you might want to exit here.
 
     # Create DB tables
     await init_db()

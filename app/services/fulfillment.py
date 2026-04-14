@@ -60,7 +60,7 @@ async def preview_fulfillment(request: FulfillmentPreviewRequest) -> dict:
         raise HTTPException(status_code=400, detail=f"Amazon fulfillment preview failed: {str(e)}")
 
 
-async def create_fulfillment_order(request: CreateFulfillmentRequest, db: AsyncSession) -> dict:
+async def create_fulfillment_order(request: CreateFulfillmentRequest, db: AsyncSession, current_client: str) -> dict:
     """Create an MCF fulfillment order."""
     if not request.items:
         raise HTTPException(status_code=400, detail="At least one item is required to create a fulfillment order.")
@@ -98,14 +98,11 @@ async def create_fulfillment_order(request: CreateFulfillmentRequest, db: AsyncS
         ],
     }
 
-    # DRY RUN — log but don't send to Amazon
-    if settings.DRY_RUN:
-        logger.warning(f"DRY RUN: Would create fulfillment order {order_id}")
-        record = FulfillmentOrderRecord(
+    # Helper to build the record
+    def _make_record(**kwargs):
+        return FulfillmentOrderRecord(
             seller_fulfillment_order_id=order_id,
             marketplace_id=marketplace,
-            amazon_status="DryRun",
-            internal_status="dry_run",
             displayable_order_id=request.displayable_order_id,
             shipping_speed_category=request.shipping_speed_category,
             destination_address_json=json.dumps(body["destinationAddress"]),
@@ -113,7 +110,14 @@ async def create_fulfillment_order(request: CreateFulfillmentRequest, db: AsyncS
             order_created_at=now,
             last_polled_at=now,
             request_json=json.dumps(body),
+            created_by_client=current_client,
+            **kwargs
         )
+
+    # DRY RUN — log but don't send to Amazon
+    if settings.DRY_RUN:
+        logger.warning(f"DRY RUN: Would create fulfillment order {order_id} by {current_client}")
+        record = _make_record(amazon_status="DryRun", internal_status="dry_run")
         db.add(record)
         await db.commit()
 
@@ -131,7 +135,6 @@ async def create_fulfillment_order(request: CreateFulfillmentRequest, db: AsyncS
         result = amazon_client.create_fulfillment_order(body)
     except Exception as e:
         logger.error(f"Amazon Creation Error for {order_id}: {e}")
-        # Return a meaningful error to the user
         raise HTTPException(
             status_code=400, 
             detail={
@@ -141,19 +144,10 @@ async def create_fulfillment_order(request: CreateFulfillmentRequest, db: AsyncS
             }
         )
 
-    record = FulfillmentOrderRecord(
-        seller_fulfillment_order_id=order_id,
-        marketplace_id=marketplace,
+    record = _make_record(
         amazon_status="Received",
         internal_status="received",
-        displayable_order_id=request.displayable_order_id,
-        shipping_speed_category=request.shipping_speed_category,
-        destination_address_json=json.dumps(body["destinationAddress"]),
-        items_json=json.dumps(body["items"]),
-        order_created_at=now,
-        last_polled_at=now,
-        request_json=json.dumps(body),
-        response_json=json.dumps(result) if result else None,
+        response_json=json.dumps(result) if result else None
     )
     db.add(record)
 
@@ -178,20 +172,21 @@ async def create_fulfillment_order(request: CreateFulfillmentRequest, db: AsyncS
 
 
 async def get_fulfillment_order(order_id: str, db: AsyncSession) -> dict | None:
-    """Get order from DB, optionally refresh from Amazon."""
+    """Get order from DB."""
     stmt = select(FulfillmentOrderRecord).where(
         FulfillmentOrderRecord.seller_fulfillment_order_id == order_id
     )
+        
     result = await db.execute(stmt)
     record = result.scalar_one_or_none()
+    print("record", record)
 
     if not record:
-        # Try fetching directly from Amazon
+        # Try fetching directly from Amazon as a fallback
         try:
             data = amazon_client.get_fulfillment_order(order_id)
             return data
-        except Exception as e:
-            logger.error(f"Order {order_id} not found in DB or Amazon: {e}")
+        except:
             return None
 
     return {
@@ -212,6 +207,13 @@ async def get_fulfillment_order(order_id: str, db: AsyncSession) -> dict | None:
 
 async def cancel_fulfillment_order(order_id: str, db: AsyncSession) -> dict:
     """Cancel a fulfillment order."""
+    stmt = select(FulfillmentOrderRecord).where(
+        FulfillmentOrderRecord.seller_fulfillment_order_id == order_id
+    )
+        
+    res = await db.execute(stmt)
+    record = res.scalar_one_or_none()
+
     if settings.DRY_RUN:
         logger.warning(f"DRY RUN: Would cancel fulfillment order {order_id}")
         return {"status": "dry_run", "message": f"DRY RUN — would cancel {order_id}"}
@@ -222,12 +224,6 @@ async def cancel_fulfillment_order(order_id: str, db: AsyncSession) -> dict:
         logger.error(f"Amazon Cancel Error for {order_id}: {e}")
         raise HTTPException(status_code=400, detail=f"Amazon fulfillment cancellation failed: {str(e)}")
 
-    # Update DB
-    stmt = select(FulfillmentOrderRecord).where(
-        FulfillmentOrderRecord.seller_fulfillment_order_id == order_id
-    )
-    res = await db.execute(stmt)
-    record = res.scalar_one_or_none()
     if record:
         record.previous_status = record.amazon_status
         record.amazon_status = "Cancelled"
@@ -249,14 +245,35 @@ async def cancel_fulfillment_order(order_id: str, db: AsyncSession) -> dict:
 async def list_fulfillment_orders(db: AsyncSession, status: str | None = None) -> list[dict]:
     """List orders from DB with optional status filter."""
     stmt = select(FulfillmentOrderRecord).order_by(FulfillmentOrderRecord.id.desc())
+    
     if status:
         stmt = stmt.where(FulfillmentOrderRecord.internal_status == status)
 
     result = await db.execute(stmt)
     records = result.scalars().all()
 
-    return [
-        {
+    results = []
+    for r in records:
+        shipments = []
+        if r.shipments_json:
+            import json
+            try:
+                shipments = json.loads(r.shipments_json)
+            except Exception:
+                pass
+                
+        amazon_tracking_numbers = []
+        tracking_numbers = []
+        
+        for s in shipments:
+            packages = s.get("fulfillmentShipmentPackage", [])
+            for p in packages:
+                if p.get("amazonFulfillmentTrackingNumber"):
+                    amazon_tracking_numbers.append(p.get("amazonFulfillmentTrackingNumber"))
+                if p.get("trackingNumber"):
+                    tracking_numbers.append(p.get("trackingNumber"))
+
+        results.append({
             "seller_fulfillment_order_id": r.seller_fulfillment_order_id,
             "amazon_status": r.amazon_status,
             "internal_status": r.internal_status,
@@ -265,6 +282,8 @@ async def list_fulfillment_orders(db: AsyncSession, status: str | None = None) -
             "shipping_speed_category": r.shipping_speed_category,
             "order_created_at": r.order_created_at.isoformat() if r.order_created_at else None,
             "status_changed_at": r.status_changed_at.isoformat() if r.status_changed_at else None,
-        }
-        for r in records
-    ]
+            "amazonFulfillmentTrackingNumber": amazon_tracking_numbers,
+            "trackingNumber": tracking_numbers,
+        })
+
+    return results

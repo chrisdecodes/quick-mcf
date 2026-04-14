@@ -13,18 +13,18 @@ from app.services.auth import validate_admin, create_api_key
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"], dependencies=[Depends(validate_admin)])
 
-@router.post("/keys", response_model=APIKeyResponse)
+@router.post("/keys", response_model=APIKeyResponse, include_in_schema=False)
 async def generate_key(request: APIKeyCreate, db: AsyncSession = Depends(get_db)):
     """Generate a new API key for a client. Requires Master Key."""
-    return await create_api_key(client_name=request.client_name, db=db, key=request.key)
+    return await create_api_key(client_name=request.client_name, db=db)
 
-@router.get("/keys", response_model=list[APIKeyResponse])
+@router.get("/keys", response_model=list[APIKeyResponse], include_in_schema=False)
 async def list_keys(db: AsyncSession = Depends(get_db)):
     """List all API keys. Requires Master Key."""
     result = await db.execute(select(APIKey))
     return result.scalars().all()
 
-@router.delete("/keys/{key_id}")
+@router.delete("/keys/{key_id}", include_in_schema=False)
 async def deactivate_key(key_id: int, db: AsyncSession = Depends(get_db)):
     """Deactivate an API key."""
     stmt = select(APIKey).where(APIKey.id == key_id)

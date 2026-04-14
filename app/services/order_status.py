@@ -169,6 +169,13 @@ async def poll_fulfillment_orders(db: AsyncSession) -> dict:
 
 async def get_order_history(order_id: str, db: AsyncSession) -> list[dict]:
     """Get status change history for an order."""
+    # First, verify existence of the parent order
+    check_stmt = select(FulfillmentOrderRecord).where(FulfillmentOrderRecord.seller_fulfillment_order_id == order_id)
+    
+    check_res = await db.execute(check_stmt)
+    if not check_res.scalar_one_or_none():
+        return [] # Or raise 404
+
     stmt = (
         select(FulfillmentStatusHistory)
         .where(FulfillmentStatusHistory.seller_fulfillment_order_id == order_id)

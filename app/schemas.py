@@ -144,7 +144,6 @@ class JobStatusResponse(BaseModel):
 
 class APIKeyCreate(BaseModel):
     client_name: str
-    key: str | None = None  # If None, the system should generate one
 
 class APIKeyResponse(BaseModel):
     id: int

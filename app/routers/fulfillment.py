@@ -7,37 +7,48 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas import CreateFulfillmentRequest, FulfillmentPreviewRequest
 from app.services import fulfillment as fulfillment_service
+from app.models import APIKey
 from app.services.auth import validate_api_key
-
 router = APIRouter(
     prefix="/api/v1/fulfillment", 
-    tags=["Fulfillment"],
-    dependencies=[Depends(validate_api_key)]
+    tags=["Fulfillment"]
 )
 
 
 @router.post("/preview")
-async def preview(request: FulfillmentPreviewRequest):
+async def preview(request: FulfillmentPreviewRequest, api_key: APIKey = Depends(validate_api_key)):
     """Get fulfillment preview - validates items, address, returns shipping estimates."""
     result = await fulfillment_service.preview_fulfillment(request)
     return result
 
 
 @router.post("/orders")
-async def create_order(request: CreateFulfillmentRequest, db: AsyncSession = Depends(get_db)):
+async def create_order(
+    request: CreateFulfillmentRequest, 
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(validate_api_key)
+):
     """Create MCF fulfillment order. Respects DRY_RUN setting."""
-    result = await fulfillment_service.create_fulfillment_order(request, db)
+    result = await fulfillment_service.create_fulfillment_order(request, db, current_client=api_key.client_name)
     return result
 
 
 @router.get("/orders")
-async def list_orders(status: str | None = None, db: AsyncSession = Depends(get_db)):
+async def list_orders(
+    status: str | None = None, 
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(validate_api_key)
+):
     """List all tracked fulfillment orders. Optional ?status= filter."""
     return await fulfillment_service.list_fulfillment_orders(db, status=status)
 
 
 @router.get("/orders/{order_id}")
-async def get_order(order_id: str, db: AsyncSession = Depends(get_db)):
+async def get_order(
+    order_id: str, 
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(validate_api_key)
+):
     """Get details of a specific fulfillment order."""
     result = await fulfillment_service.get_fulfillment_order(order_id, db)
     if not result:
@@ -46,6 +57,10 @@ async def get_order(order_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/orders/{order_id}")
-async def cancel_order(order_id: str, db: AsyncSession = Depends(get_db)):
+async def cancel_order(
+    order_id: str, 
+    db: AsyncSession = Depends(get_db),
+    api_key: APIKey = Depends(validate_api_key)
+):
     """Cancel a fulfillment order (only if in Received/Planning status)."""
     return await fulfillment_service.cancel_fulfillment_order(order_id, db)
