@@ -14,8 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.amazon_client import amazon_client
 from app.config import settings
 from app.models import FulfillmentOrderRecord, FulfillmentStatusHistory
-from app.schemas import CreateFulfillmentRequest, FulfillmentPreviewRequest
-
+from app.schemas import CreateFulfillmentRequest
 logger = logging.getLogger(__name__)
 
 from app.constants import map_amazon_status

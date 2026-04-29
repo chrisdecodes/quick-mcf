@@ -2,10 +2,12 @@
 Orders / Fulfillment Status routes — /api/v1/orders
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
+from app.rate_limit import limiter
 from app.services import fulfillment as fulfillment_service
 from app.services import order_status as order_status_service
 from app.models import APIKey
@@ -17,7 +19,9 @@ router = APIRouter(
 
 
 @router.post("/sync")
+@limiter.limit(lambda: settings.RATE_LIMIT_AMAZON)
 async def trigger_poll(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     api_key: APIKey = Depends(validate_api_key)
 ):
@@ -27,7 +31,9 @@ async def trigger_poll(
 
 
 @router.get("")
+@limiter.limit(lambda: settings.RATE_LIMIT_STANDARD)
 async def list_orders(
+    request: Request,
     status: str | None = None, 
     db: AsyncSession = Depends(get_db),
     api_key: APIKey = Depends(validate_api_key)
@@ -37,7 +43,9 @@ async def list_orders(
 
 
 @router.get("/{order_id}", include_in_schema=False)
+@limiter.limit(lambda: settings.RATE_LIMIT_STANDARD)
 async def get_order(
+    request: Request,
     order_id: str, 
     db: AsyncSession = Depends(get_db),
     api_key: APIKey = Depends(validate_api_key)
@@ -50,7 +58,9 @@ async def get_order(
 
 
 @router.get("/{order_id}/history", include_in_schema=False)
+@limiter.limit(lambda: settings.RATE_LIMIT_STANDARD)
 async def get_order_history(
+    request: Request,
     order_id: str, 
     db: AsyncSession = Depends(get_db),
     api_key: APIKey = Depends(validate_api_key)

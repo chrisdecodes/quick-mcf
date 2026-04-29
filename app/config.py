@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     # --- Authentication ---
     MASTER_API_KEY: str = "dev_master_key"  # Should be changed in production
 
+    # --- Rate Limiting ---
+    # Strict limit for endpoints that call Amazon SP-API (e.g. create order, sync)
+    # This enforces a ~15s gap between requests to prevent bursts.
+    RATE_LIMIT_AMAZON: str = "1/15 seconds"
+    # Standard limit for read-heavy / DB-only endpoints (relaxed but controlled)
+    RATE_LIMIT_STANDARD: str = "5/10 seconds"
+
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

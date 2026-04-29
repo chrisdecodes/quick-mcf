@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import init_db
+from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.routers import fulfillment, inventory, orders, admin, jobs
 from app.jobs import scheduler, run_inventory_sync, run_fulfillment_poll
 
@@ -85,6 +87,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Register routers
 app.include_router(fulfillment.router)
